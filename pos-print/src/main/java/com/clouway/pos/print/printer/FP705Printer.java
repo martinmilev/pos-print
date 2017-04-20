@@ -25,6 +25,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
+import static com.clouway.pos.print.printer.Status.FISCAL_RECEIPT_IS_OPEN;
+import static com.clouway.pos.print.printer.Status.NON_FISCAL_RECEIPT_IS_OPEN;
+
 /**
  * FP705 is a printer driver of Datecs's FP705 printer driver.
  *
@@ -79,6 +82,7 @@ public class FP705Printer implements ReceiptPrinter {
   @Override
   public PrintReceiptResponse printReceipt(Receipt receipt) throws IOException {
     byte seq = SEQ_START;
+    checkForOpenReceipt(seq);
 
     Set<Status> statuses = new LinkedHashSet<>();
     Set<Status> warnings = new LinkedHashSet<>();
@@ -113,7 +117,7 @@ public class FP705Printer implements ReceiptPrinter {
       statuses.addAll(decodeStatus(response.status()));
     }
 
-    response = sendPacket(buildPacket(seq, TEXT_RECEIPT_CLOSE, ""));
+    response = closeNonFiscalReceipt(seq);
     statuses.addAll(decodeStatus(response.status()));
 
     for (Status status : statuses) {
@@ -127,7 +131,7 @@ public class FP705Printer implements ReceiptPrinter {
 
   public void reportForPeriod(LocalDateTime start, LocalDateTime end, PeriodType periodType) throws IOException {
     DateTimeFormatter formatter = DateTimeFormatter.ISO_DATE_TIME;
-    
+
     // Command: 94 (5Еh) – fiscal memory report by date
     // Parameters of the command: {Type}<SEP>{Start}<SEP>{End}<SEP> Mandatory parameters:
     //    • Type – 0 – short; 1 – detailed; Optional parameters:
@@ -185,6 +189,7 @@ public class FP705Printer implements ReceiptPrinter {
   @Override
   public PrintReceiptResponse printFiscalReceipt(Receipt receipt) throws IOException {
     byte seq = SEQ_START;
+    checkForOpenReceipt(seq);
 
     Set<Status> statuses = new LinkedHashSet<>();
     Set<Status> warnings = new LinkedHashSet<>();
@@ -218,10 +223,10 @@ public class FP705Printer implements ReceiptPrinter {
       statuses.addAll(decodeStatus(response.status()));
     }
 
-    response = sendPacket(buildPacket(seq, FISCAL_RECEIPT_TOTAL, params("0", String.format("%.2f", sum))));
+    response = closeFiscalReceipt(seq,sum);
     statuses.addAll(decodeStatus(response.status()));
-    response = sendPacket(buildPacket(seq, FISCAL_RECEIPT_CLOSE, ""));
-    statuses.addAll(decodeStatus(response.status()));
+
+
 
     for (Status status : statuses) {
       if (status.isForWarning()) {
@@ -427,4 +432,22 @@ public class FP705Printer implements ReceiptPrinter {
     return result;
   }
 
+  private void checkForOpenReceipt(byte seq) throws IOException {
+    Set<Status> initStatus = getStatus();
+    if (initStatus.contains(FISCAL_RECEIPT_IS_OPEN)) {
+      closeFiscalReceipt(seq,0f);
+    }
+    if (initStatus.contains(NON_FISCAL_RECEIPT_IS_OPEN)) {
+      closeNonFiscalReceipt(seq);
+    }
+  }
+
+  private Response closeFiscalReceipt(byte seq, double sum) throws IOException {
+    sendPacket(buildPacket(seq, FISCAL_RECEIPT_TOTAL, params("0", String.format("%.2f", sum))));
+    return sendPacket(buildPacket(seq, FISCAL_RECEIPT_CLOSE, ""));
+  }
+
+  private Response closeNonFiscalReceipt(byte seq) throws IOException {
+    return sendPacket(buildPacket(seq, TEXT_RECEIPT_CLOSE, ""));
+  }
 }
